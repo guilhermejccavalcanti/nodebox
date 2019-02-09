@@ -18,7 +18,6 @@ import oscP5.OscEventListener;
 import oscP5.OscMessage;
 import oscP5.OscP5;
 import oscP5.OscStatus;
-
 import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.undo.UndoManager;
@@ -30,11 +29,11 @@ import java.io.IOException;
 import java.io.StringWriter;
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
 import static com.google.common.base.Preconditions.*;
 
 /**
@@ -43,54 +42,83 @@ import static com.google.common.base.Preconditions.*;
 public class NodeBoxDocument extends JFrame implements WindowListener, HandleDelegate {
 
     private static final Logger LOG = Logger.getLogger(NodeBoxDocument.class.getName());
+
     private static final String WINDOW_MODIFIED = "windowModified";
 
     public static String lastFilePath;
+
     public static String lastExportPath;
 
     private static NodeClipboard nodeClipboard;
 
     private File documentFile;
+
     private boolean documentChanged;
+
     private AnimationTimer animationTimer;
+
     private boolean loaded = false;
 
     private UndoManager undoManager = new UndoManager();
+
     private boolean holdEdits = false;
+
     private String lastEditType = null;
+
     private String lastEditObjectId = null;
 
     // State
     private final NodeLibraryController controller;
+
     private FunctionRepository functionRepository;
+
     private String activeNetworkPath = "";
+
     private String activeNodeName = "";
+
     private boolean restoring = false;
+
     private boolean invalidateFunctionRepository = false;
+
     private double frame = 1;
 
     // Rendering
     private final AtomicBoolean isRendering = new AtomicBoolean(false);
+
     private final AtomicBoolean shouldRender = new AtomicBoolean(false);
+
     private SwingWorker<List<?>, Node> currentRender = null;
+
     private Iterable<?> lastRenderResult = null;
+
     private Map<Node, List<?>> renderResults = ImmutableMap.of();
 
     // OSC
     private OscP5 oscP5;
+
     private Map<String, List<Object>> oscMessages = new HashMap<String, List<Object>>();
 
     // GUI components
     private final NodeBoxMenuBar menuBar;
+
     private final AnimationBar animationBar;
+
     private final AddressBar addressBar;
+
     private final ViewerPane viewerPane;
+
     private final DataSheet dataSheet;
+
     private final PortView portView;
+
     private final NetworkPane networkPane;
+
     private final NetworkView networkView;
+
     private JSplitPane parameterNetworkSplit;
+
     private JSplitPane topSplit;
+
     private final ProgressPanel progressPanel;
 
     private List<Zoom> zoomListeners = new ArrayList<Zoom>();
@@ -116,7 +144,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
             document.setDocumentFile(file);
         } catch (OutdatedLibraryException e) {
             UpgradeResult result = NodeLibraryUpgrades.upgrade(file);
-            // The file is used here as the base name for finding relative libraries.
             library = result.getLibrary(file, Application.getInstance().getSystemRepository());
             document = new NodeBoxDocument(library);
             document.setDocumentFile(file);
@@ -135,10 +162,13 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
      */
     private void showUpgradeResult(UpgradeResult result) {
         checkNotNull(result);
-        if (result.getWarnings().isEmpty()) return;
+        if (result.getWarnings().isEmpty()) {
+            return;
+        }
         final UpgradeWarningsDialog dialog = new UpgradeWarningsDialog(result);
         dialog.setLocationRelativeTo(this);
         SwingUtilities.invokeLater(new Runnable() {
+
             public void run() {
                 dialog.setVisible(true);
             }
@@ -151,9 +181,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         Node rectPrototype = nodeRepository.getNode("corevector.rect");
         String name = root.uniqueName(rectPrototype.getName());
         Node rect1 = rectPrototype.extend().withName(name).withPosition(new nodebox.graphics.Point(1, 1));
-        root = root
-                .withChildAdded(rect1)
-                .withRenderedChild(rect1);
+        root = root.withChildAdded(rect1).withRenderedChild(rect1);
         return NodeLibrary.create("untitled", root, nodeRepository, FunctionRepository.of());
     }
 
@@ -162,12 +190,15 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     public NodeBoxDocument(NodeLibrary nodeLibrary) {
-        if (!nodeLibrary.hasProperty("canvasWidth"))
+        if (!nodeLibrary.hasProperty("canvasWidth")) {
             nodeLibrary = nodeLibrary.withProperty("canvasWidth", "1000");
-        if (!nodeLibrary.hasProperty("canvasHeight"))
+        }
+        if (!nodeLibrary.hasProperty("canvasHeight")) {
             nodeLibrary = nodeLibrary.withProperty("canvasHeight", "1000");
-        if (!nodeLibrary.hasProperty("oscPort"))
+        }
+        if (!nodeLibrary.hasProperty("oscPort")) {
             nodeLibrary = nodeLibrary.withProperty("oscPort", String.valueOf(randomOSCPort()));
+        }
         controller = NodeLibraryController.withLibrary(nodeLibrary);
         invalidateFunctionRepository = true;
         JPanel rootPanel = new JPanel(new BorderLayout());
@@ -179,9 +210,9 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         networkView = networkPane.getNetworkView();
         parameterNetworkSplit = new CustomSplitPane(JSplitPane.VERTICAL_SPLIT, portPane, networkPane);
         topSplit = new CustomSplitPane(JSplitPane.HORIZONTAL_SPLIT, viewerPane, parameterNetworkSplit);
-
         addressBar = new AddressBar();
         addressBar.setOnSegmentClickListener(new AddressBar.OnSegmentClickListener() {
+
             public void onSegmentClicked(String fullPath) {
                 setActiveNetwork(fullPath);
             }
@@ -190,16 +221,11 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         JPanel addressPanel = new JPanel(new BorderLayout());
         addressPanel.add(addressBar, BorderLayout.CENTER);
         addressPanel.add(progressPanel, BorderLayout.EAST);
-
         rootPanel.add(addressPanel, BorderLayout.NORTH);
         rootPanel.add(topSplit, BorderLayout.CENTER);
-
-        // Animation properties.
         animationTimer = new AnimationTimer(this);
         animationBar = new AnimationBar(this);
         rootPanel.add(animationBar, BorderLayout.SOUTH);
-
-        // Zoom in / out shortcuts.
         KeyStroke zoomInStroke1 = KeyStroke.getKeyStroke(KeyEvent.VK_EQUALS, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask() + Event.SHIFT_MASK);
         KeyStroke zoomInStroke2 = KeyStroke.getKeyStroke(KeyEvent.VK_EQUALS, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask());
         KeyStroke zoomInStroke3 = KeyStroke.getKeyStroke(KeyEvent.VK_PLUS, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask());
@@ -209,7 +235,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         getRootPane().registerKeyboardAction(zoomInHandler, zoomInStroke3, JComponent.WHEN_IN_FOCUSED_WINDOW);
         KeyStroke zoomOutStroke = KeyStroke.getKeyStroke(KeyEvent.VK_MINUS, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask());
         getRootPane().registerKeyboardAction(new ZoomOutHandler(), zoomOutStroke, JComponent.WHEN_IN_FOCUSED_WINDOW);
-
         setContentPane(rootPanel);
         setLocationByPlatform(true);
         setSize(1100, 800);
@@ -219,9 +244,9 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         menuBar = new NodeBoxMenuBar(this);
         setJMenuBar(menuBar);
         loaded = true;
-
         oscP5 = new OscP5(new Object(), getOSCPort());
         oscP5.addListener(new OscEventListener() {
+
             @Override
             public void oscEvent(OscMessage m) {
                 ImmutableList<Object> arguments = ImmutableList.copyOf(m.arguments());
@@ -240,7 +265,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     //// Node Library management ////
-
     public NodeLibrary getNodeLibrary() {
         return controller.getNodeLibrary();
     }
@@ -274,7 +298,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     //// Node operations ////
-
     /**
      * Create a node in the active network.
      * This node is based on a prototype.
@@ -290,15 +313,12 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         controller.setRenderedChild(activeNetworkPath, newNode.getName());
         setActiveNode(newNode);
         stopEdits();
-
         Node activeNode = getActiveNode();
         networkView.updateNodes();
         networkView.singleSelect(activeNode);
         portView.updateAll();
-
         requestRender();
     }
-
 
     /**
      * Change the node position of the given node.
@@ -310,13 +330,9 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         checkNotNull(node);
         checkNotNull(point);
         checkArgument(getActiveNetwork().hasChild(node));
-        // Note that we're passing in the parent network of the node.
-        // This means that all move changes to the parent network are grouped
-        // together under one edit, instead of for each node individually.
         addEdit("Move Node", "moveNode", getActiveNetworkPath());
         String nodePath = Node.path(activeNetworkPath, node);
         controller.setNodePosition(nodePath, point);
-
         networkView.updatePosition(node);
     }
 
@@ -449,13 +465,9 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
      * @param metadata A map of metadata.
      */
     public void setNodeMetadata(Node node, Object metadata) {
-        // TODO: Implement
-        // TODO: Make NodeAttributesEditor use this.
-        // Metadata changes could mean the icon has changed.
         networkView.updateNodes();
         if (node == getActiveNode()) {
             portView.updateAll();
-            // Updating the metadata could cause changes to a handle.
             viewerPane.repaint();
             dataSheet.repaint();
         }
@@ -472,7 +484,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         checkArgument(getActiveNetwork().hasChild(node));
         addEdit("Set Rendered");
         controller.setRenderedChild(activeNetworkPath, node.getName());
-
         networkView.updateNodes();
         networkView.singleSelect(node);
         requestRender();
@@ -480,7 +491,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
 
     public void setNodeExported(Node node, boolean exported) {
         throw new UnsupportedOperationException("Not implemented yet.");
-        //addEdit("Set Exported");
     }
 
     /**
@@ -519,7 +529,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         checkNotNull(node, "Node to remove cannot be null.");
         checkArgument(getActiveNetwork().hasChild(node), "Node to remove is not in active network.");
         controller.removeNode(activeNetworkPath, node.getName());
-        // If the removed node was the active one, reset the port view.
         if (node == getActiveNode()) {
             setActiveNode((Node) null);
         }
@@ -535,7 +544,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     public void connect(String outputNode, String inputNode, String inputPort) {
         addEdit("Connect");
         controller.connect(activeNetworkPath, outputNode, inputNode, inputPort);
-
         portView.updateAll();
         viewerPane.updateHandle();
         requestRender();
@@ -549,7 +557,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     public void disconnect(Connection connection) {
         addEdit("Disconnect");
         controller.disconnect(activeNetworkPath, connection);
-
         portView.updateAll();
         networkView.updateConnections();
         viewerPane.updateHandle();
@@ -589,7 +596,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         checkArgument(getActiveNetwork().hasChild(node));
         addEdit("Remove Port");
         controller.removePort(activeNetworkPath, node.getName(), portName);
-
         if (node == getActiveNode()) {
             portView.updateAll();
             viewerPane.repaint();
@@ -662,9 +668,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     public void addPortMenuItem(String portName, String key, String label) {
         checkValidPort(portName);
         addEdit("Add Port Menu Item");
-
         controller.addPortMenuItem(getActiveNodePath(), portName, key, label);
-
         portView.updateAll();
         requestRender();
     }
@@ -678,9 +682,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     public void removePortMenuItem(String portName, MenuItem item) {
         checkValidPort(portName);
         addEdit("Remove Parameter Menu Item");
-
         controller.removePortMenuItem(getActiveNodePath(), portName, item);
-
         Node n = getActiveNode();
         portView.updateAll();
         requestRender();
@@ -741,19 +743,9 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     public void setValue(String portName, Object value) {
         checkValidPort(portName);
         addEdit("Change Value", "changeValue", getActiveNodePath() + "#" + portName);
-
         controller.setPortValue(getActiveNodePath(), portName, value);
-
-        // TODO set variables on the root port.
-//        if (port.getNode() == nodeLibrary.getRoot()) {
-//            nodeLibrary.setVariable(port.getName(), port.asString());
-//        }
-
         portView.updatePortValue(portName, value);
-        // Setting a port might change enable expressions, and thus change the enabled state of a port row.
         portView.updateEnabledState();
-        // Setting a port might change the enabled state of the handle.
-        // viewer.setHandleEnabled(activeNode != null && activeNode.hasEnabledHandle());
         requestRender();
     }
 
@@ -779,9 +771,10 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     //// Port pane callbacks ////
-
     public void editMetadata() {
-        if (getActiveNode() == null) return;
+        if (getActiveNode() == null) {
+            return;
+        }
         JDialog editorDialog = new NodeAttributesDialog(NodeBoxDocument.this);
         editorDialog.setSize(580, 751);
         editorDialog.setLocationRelativeTo(NodeBoxDocument.this);
@@ -789,7 +782,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     //// Screen shot ////
-
     public void takeScreenshot(File outputFile) {
         Container c = getContentPane();
         BufferedImage img = new BufferedImage(c.getWidth(), c.getHeight(), BufferedImage.TYPE_INT_RGB);
@@ -803,7 +795,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     //// HandleDelegate implementation ////
-
     public void silentSet(String portName, Object value) {
         try {
             Port port = getActiveNode().getInput(portName);
@@ -813,27 +804,24 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     // TODO Merge stopEditing and stopCombiningEdits.
-
     public void stopEditing() {
         stopCombiningEdits();
     }
 
     public void updateHandle() {
-        if (viewerPane.getHandle() != null)
+        if (viewerPane.getHandle() != null) {
             viewerPane.getHandle().update();
-        // TODO Make viewer repaint more fine-grained.
+        }
         viewerPane.repaint();
     }
 
     //// Active network / node ////
-
     /**
      * Return the network that is currently "open": shown in the network view.
      *
      * @return The currently active network.
      */
     public Node getActiveNetwork() {
-        // TODO This might be a potential bottleneck.
         return getNodeLibrary().getNodeForPath(activeNetworkPath);
     }
 
@@ -845,34 +833,30 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         checkNotNull(path);
         activeNetworkPath = path;
         Node network = getNodeLibrary().getNodeForPath(path);
-
         if (!restoring) {
             if (network.getRenderedChild() != null) {
                 setActiveNode(network.getRenderedChildName());
-            } else if (!network.isEmpty()) {
-                // Set the active node to the first child.
-                setActiveNode(network.getChildren().iterator().next());
             } else {
-                setActiveNode((Node) null);
+                if (!network.isEmpty()) {
+                    setActiveNode(network.getChildren().iterator().next());
+                } else {
+                    setActiveNode((Node) null);
+                }
             }
         }
-
         addressBar.setPath(activeNetworkPath);
-        //viewer.setHandleEnabled(activeNode != null && activeNode.hasEnabledHandle());
         networkView.updateNodes();
         networkView.resetViewTransform();
-        if (!restoring)
+        if (!restoring) {
             networkView.singleSelect(getActiveNode());
+        }
         viewerPane.repaint();
         dataSheet.repaint();
-
         requestRender();
     }
 
     private Node getRenderedNode() {
         return getNodeLibrary().getRoot();
-        // if (viewerPane.shouldAlwaysRenderRoot()) return getNodeLibrary().getRoot();
-        // return getActiveNetwork();
     }
 
     /**
@@ -881,7 +865,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     public void goUp() {
         throw new UnsupportedOperationException("Not implemented yet.");
     }
-
 
     /**
      * Return the node that is currently focused:
@@ -920,7 +903,9 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     public void setActiveNode(String nodeName) {
-        if (!restoring && getActiveNodeName().equals(nodeName)) return;
+        if (!restoring && getActiveNodeName().equals(nodeName)) {
+            return;
+        }
         stopCombiningEdits();
         if (nodeName.isEmpty()) {
             activeNodeName = "";
@@ -928,12 +913,8 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
             checkArgument(getActiveNetwork().hasChild(nodeName));
             activeNodeName = nodeName;
         }
-
         Node n = getActiveNode();
         createHandleForActiveNode();
-        //editorPane.setActiveNode(activeNode);
-        // TODO If we draw handles again, we should repaint the viewer pane.
-        //viewerPane.repaint(); // For the handle
         portView.updateAll();
         restoring = false;
         networkView.singleSelect(n);
@@ -943,7 +924,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         Node activeNode = getActiveNode();
         if (activeNode != null) {
             Handle handle = null;
-
             if (getFunctionRepository().hasFunction(activeNode.getHandle())) {
                 Function handleFunction = getFunctionRepository().getFunction(activeNode.getHandle());
                 try {
@@ -952,7 +932,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
                     LOG.log(Level.WARNING, "Error while creating handle for " + activeNode, e);
                 }
             }
-
             if (handle != null) {
                 handle.setHandleDelegate(this);
                 handle.update();
@@ -962,27 +941,27 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
             }
         }
     }
-//        if (activeNode != null) {
-//            Handle handle = null;
-//            try {
-//                handle = activeNode.createHandle();
-//                // If the handle was created successfully, remove the messages.
-//                editorPane.clearMessages();
-//            } catch (Exception e) {
-//                editorPane.setMessages(e.toString());
-//            }
-//            if (handle != null) {
-//                handle.setHandleDelegate(this);
-//                // TODO Remove this. Find out why the handle needs access to the viewer (only repaint?) and put that in the HandleDelegate.
-//                handle.setViewer(viewer);
-//                viewer.setHandleEnabled(activeNode.hasEnabledHandle());
-//            }
-//            viewer.setHandle(handle);
-//        } else {
-//            viewer.setHandle(null);
-//        }
-//    }
 
+    //        if (activeNode != null) {
+    //            Handle handle = null;
+    //            try {
+    //                handle = activeNode.createHandle();
+    //                // If the handle was created successfully, remove the messages.
+    //                editorPane.clearMessages();
+    //            } catch (Exception e) {
+    //                editorPane.setMessages(e.toString());
+    //            }
+    //            if (handle != null) {
+    //                handle.setHandleDelegate(this);
+    //                // TODO Remove this. Find out why the handle needs access to the viewer (only repaint?) and put that in the HandleDelegate.
+    //                handle.setViewer(viewer);
+    //                viewer.setHandleEnabled(activeNode.hasEnabledHandle());
+    //            }
+    //            viewer.setHandle(handle);
+    //        } else {
+    //            viewer.setHandle(null);
+    //        }
+    //    }
     // todo: this method feels like it doesn't belong here (maybe rename it?)
     public boolean hasInput(String portName) {
         Node node = getActiveNode();
@@ -993,22 +972,20 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         Node network = getActiveNetwork();
         Node node = getActiveNode();
         for (Connection c : network.getConnections()) {
-            if (c.getInputNode().equals(node.getName()) && c.getInputPort().equals(portName))
+            if (c.getInputNode().equals(node.getName()) && c.getInputPort().equals(portName)) {
                 return true;
+            }
         }
         return false;
     }
 
-
     //// Animation ////
-
     public double getFrame() {
         return frame;
     }
 
     public void setFrame(double frame) {
         this.frame = frame;
-
         animationBar.setFrame(frame);
         requestRender();
     }
@@ -1040,7 +1017,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     //// Rendering ////
-
     /**
      * Request a renderNetwork operation.
      * <p/>
@@ -1051,9 +1027,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
      * If all checks pass, a renderNetwork request is made.
      */
     public void requestRender() {
-        // If we're already rendering, request the next renderNetwork.
         if (isRendering.compareAndSet(false, true)) {
-            // If we're not rendering, start rendering.
             render();
         } else {
             shouldRender.set(true);
@@ -1075,11 +1049,10 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         progressPanel.setInProgress(true);
         final NodeLibrary renderLibrary = getNodeLibrary();
         final Node renderNetwork = getRenderedNode();
-        final ImmutableMap<String, ?> data = ImmutableMap.of(
-                "mouse.position", viewerPane.getViewer().getLastMousePosition(),
-                "osc.messages", oscMessages);
+        final ImmutableMap<String, ?> data = ImmutableMap.of("mouse.position", viewerPane.getViewer().getLastMousePosition(), "osc.messages", oscMessages);
         final NodeContext context = new NodeContext(renderLibrary, getFunctionRepository(), frame, data, renderResults);
         currentRender = new SwingWorker<List<?>, Node>() {
+
             @Override
             protected List<?> doInBackground() throws Exception {
                 List<?> results = context.renderNode(renderNetwork);
@@ -1090,23 +1063,35 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
 
             @Override
             protected void done() {
+                networkPane.clearError();
                 isRendering.set(false);
                 currentRender = null;
+                List<?> results;
                 try {
-                    List<?> results = get();
-                    lastRenderResult = results;
-                    viewerPane.setOutputValues(results);
+                    results = get();
+                } catch (CancellationException e) {
+                    results = ImmutableList.of();
                 } catch (InterruptedException e) {
-                    LOG.log(Level.INFO, "Interrupted the render.", e);
+                    results = ImmutableList.of();
                 } catch (ExecutionException e) {
                     networkPane.setError(e);
-                } finally {
-                    networkPane.clearError();
-                    networkView.checkErrorAndRepaint();
-                    progressPanel.setInProgress(false);
+                    results = ImmutableList.of();
                 }
+                lastRenderResult = results;
+                networkView.checkErrorAndRepaint();
+                progressPanel.setInProgress(false);
+                viewerPane.setOutputValues(results);
+                Set<String> oscCache = (Set<String>) context.getData().get("osc.cache");
+                Map<String, List<Object>> oscCachedMessages = new HashMap<String, List<Object>>();
+                for (String key : oscCache) {
+                    if (oscMessages.containsKey(key)) {
+                        oscCachedMessages.put(key, oscMessages.get(key));
+                    }
+                }
+                oscMessages = oscCachedMessages;
                 if (shouldRender.getAndSet(false)) {
                     SwingUtilities.invokeLater(new Runnable() {
+
                         @Override
                         public void run() {
                             requestRender();
@@ -1125,7 +1110,9 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
      * @return The output value.
      */
     private Object firstOutputValue(final Map<String, Object> outputValues) {
-        if (outputValues.isEmpty()) return null;
+        if (outputValues.isEmpty()) {
+            return null;
+        }
         return outputValues.values().iterator().next();
     }
 
@@ -1134,7 +1121,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     //// Undo ////
-
     /**
      * Edits are no longer recorded until you call stopEdits. This allows you to batch edits.
      *
@@ -1178,11 +1164,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     public void addEdit(String command, String type, String objectId) {
         if (!holdEdits) {
             markChanged();
-
             if (lastEditType != null && lastEditType.equals(type) && lastEditObjectId.equals(objectId)) {
-                // If the last edit type and last edit id are the same,
-                // we combine the two edits into one.
-                // Since we've already saved the last state, we don't need to do anything.
             } else {
                 addEdit(command);
                 lastEditType = type;
@@ -1198,7 +1180,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
      * Use this method e.g. for breaking apart overzealous edit grouping.
      */
     public void stopCombiningEdits() {
-        // We just reset the last edit type and object so that addEdit will be forced to create a new edit.
         lastEditType = null;
         lastEditObjectId = null;
         stopEdits();
@@ -1209,25 +1190,27 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     public void undo() {
-        if (!undoManager.canUndo()) return;
+        if (!undoManager.canUndo()) {
+            return;
+        }
         undoManager.undo();
         menuBar.updateUndoRedoState();
     }
 
     public void redo() {
-        if (!undoManager.canRedo()) return;
+        if (!undoManager.canRedo()) {
+            return;
+        }
         undoManager.redo();
         menuBar.updateUndoRedoState();
     }
 
     //// Code editor actions ////
-
     public void fireCodeChanged(Node node, boolean changed) {
         networkView.codeChanged(node, changed);
     }
 
     //// Document actions ////
-
     public File getDocumentFile() {
         return documentFile;
     }
@@ -1247,9 +1230,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         if (shouldClose()) {
             Application.getInstance().removeDocument(this);
             dispose();
-            // On Mac the application does not close if the last window is closed.
             if (!Platform.onMac()) {
-                // If there are no more documents, exit the application.
                 if (Application.getInstance().getDocumentCount() == 0) {
                     System.exit(0);
                 }
@@ -1266,10 +1247,14 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
             int retVal = sd.show(this);
             if (retVal == JOptionPane.YES_OPTION) {
                 return save();
-            } else if (retVal == JOptionPane.NO_OPTION) {
-                return true;
-            } else if (retVal == JOptionPane.CANCEL_OPTION) {
-                return false;
+            } else {
+                if (retVal == JOptionPane.NO_OPTION) {
+                    return true;
+                } else {
+                    if (retVal == JOptionPane.CANCEL_OPTION) {
+                        return false;
+                    }
+                }
             }
         }
         return true;
@@ -1291,8 +1276,9 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
                 if (chosenFile.exists()) {
                     ReplaceDialog rd = new ReplaceDialog(chosenFile);
                     int retVal = rd.show(this);
-                    if (retVal == JOptionPane.CANCEL_OPTION)
+                    if (retVal == JOptionPane.CANCEL_OPTION) {
                         return saveAs();
+                    }
                 }
             }
             lastFilePath = chosenFile.getParentFile().getAbsolutePath();
@@ -1304,7 +1290,6 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     public void revert() {
-        // TODO: Implement revert
         JOptionPane.showMessageDialog(this, "Revert is not implemented yet.", "NodeBox", JOptionPane.ERROR_MESSAGE);
     }
 
@@ -1349,10 +1334,10 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     //// Export ////
-
     private ImageFormat imageFormatForFile(File file) {
-        if (file.getName().toLowerCase().endsWith(".pdf"))
+        if (file.getName().toLowerCase().endsWith(".pdf")) {
             return ImageFormat.PDF;
+        }
         return ImageFormat.PNG;
     }
 
@@ -1360,16 +1345,19 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         ExportDialog d = new ExportDialog(this);
         d.setLocationRelativeTo(this);
         d.setVisible(true);
-        if (!d.isDialogSuccessful()) return;
+        if (!d.isDialogSuccessful()) {
+            return;
+        }
         nodebox.ui.ImageFormat chosenFormat = d.getFormat();
         File chosenFile = FileUtils.showSaveDialog(this, lastExportPath, "png,pdf", "Image file");
-        if (chosenFile == null) return;
+        if (chosenFile == null) {
+            return;
+        }
         lastExportPath = chosenFile.getParentFile().getAbsolutePath();
         exportToFile(chosenFile, chosenFormat);
     }
 
     private void exportToFile(File file, ImageFormat format) {
-        // get data from last export.
         if (lastRenderResult == null) {
             JOptionPane.showMessageDialog(this, "There is no last render result.");
         } else {
@@ -1384,18 +1372,23 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
 
     public boolean exportRange() {
         File exportDirectory = lastExportPath == null ? null : new File(lastExportPath);
-        if (exportDirectory != null && !exportDirectory.exists())
+        if (exportDirectory != null && !exportDirectory.exists()) {
             exportDirectory = null;
+        }
         ExportRangeDialog d = new ExportRangeDialog(this, exportDirectory);
         d.setLocationRelativeTo(this);
         d.setVisible(true);
-        if (!d.isDialogSuccessful()) return false;
+        if (!d.isDialogSuccessful()) {
+            return false;
+        }
         String exportPrefix = d.getExportPrefix();
         File directory = d.getExportDirectory();
         int fromValue = d.getFromValue();
         int toValue = d.getToValue();
         nodebox.ui.ImageFormat format = d.getFormat();
-        if (directory == null) return false;
+        if (directory == null) {
+            return false;
+        }
         lastExportPath = directory.getAbsolutePath();
         exportRange(exportPrefix, directory, fromValue, toValue, format);
         return true;
@@ -1403,6 +1396,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
 
     public void exportRange(final String exportPrefix, final File directory, final int fromValue, final int toValue, final ImageFormat format) {
         exportThreadedRange(getNodeLibrary(), fromValue, toValue, new ExportDelegate() {
+
             int count = 1;
 
             @Override
@@ -1418,7 +1412,9 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         ExportMovieDialog d = new ExportMovieDialog(this, lastExportPath == null ? null : new File(lastExportPath));
         d.setLocationRelativeTo(this);
         d.setVisible(true);
-        if (!d.isDialogSuccessful()) return false;
+        if (!d.isDialogSuccessful()) {
+            return false;
+        }
         File chosenFile = d.getExportPath();
         if (chosenFile != null) {
             lastExportPath = chosenFile.getParentFile().getAbsolutePath();
@@ -1452,13 +1448,13 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         }
     }
 
-
     private void exportToMovieFile(File file, final VideoFormat videoFormat, final int fromValue, final int toValue) {
         file = videoFormat.ensureFileExtension(file);
         final int width = getCanvasWidth();
         final int height = getCanvasHeight();
         final Movie movie = new Movie(file.getAbsolutePath(), videoFormat, width, height, false);
         exportThreadedRange(controller.getNodeLibrary(), fromValue, toValue, new ExportDelegate() {
+
             @Override
             public void frameDone(double frame, Iterable<?> results) {
                 movie.addFrame(ObjectsRenderer.createMovieImage(results, width, height));
@@ -1475,6 +1471,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     private abstract class ExportDelegate {
+
         protected InterruptibleProgressDialog progressDialog;
 
         void frameDone(double frame, Iterable<?> results) {
@@ -1490,27 +1487,26 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         d.setTaskCount(toValue - fromValue + 1);
         d.setVisible(true);
         exportDelegate.progressDialog = d;
-
         final NodeLibrary exportLibrary = getNodeLibrary();
         final FunctionRepository exportFunctionRepository = getFunctionRepository();
         final Node exportNetwork = library.getRoot();
         final ExportViewer viewer = new ExportViewer();
-
         Thread t = new Thread(new Runnable() {
+
             public void run() {
                 try {
                     Map<Node, List<?>> renderResults = ImmutableMap.of();
                     for (int frame = fromValue; frame <= toValue; frame++) {
-                        if (Thread.currentThread().isInterrupted())
+                        if (Thread.currentThread().isInterrupted()) {
                             break;
-
+                        }
                         NodeContext context = new NodeContext(exportLibrary, exportFunctionRepository, frame, ImmutableMap.<String, Object>of(), renderResults);
                         List<?> results = context.renderNode(exportNetwork);
                         renderResults = context.getRenderResults();
                         viewer.setOutputValues(results);
                         exportDelegate.frameDone(frame, results);
-
                         SwingUtilities.invokeLater(new Runnable() {
+
                             public void run() {
                                 d.tick();
                             }
@@ -1521,6 +1517,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
                     LOG.log(Level.WARNING, "Error while exporting", e);
                 } finally {
                     SwingUtilities.invokeLater(new Runnable() {
+
                         public void run() {
                             d.setVisible(false);
                             viewer.setVisible(false);
@@ -1534,10 +1531,10 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         viewer.setVisible(true);
     }
 
-    //// Copy / Paste ////
-
     private class NodeClipboard {
+
         private final Node network;
+
         private final ImmutableList<Node> nodes;
 
         private NodeClipboard(Node network, Iterable<Node> nodes) {
@@ -1552,16 +1549,15 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     public void copy() {
-        // When copying, save a reference to the nodes and the parent network.
-        // Since the model is immutable, we don't need to make defensive copies.
         nodeClipboard = new NodeClipboard(getActiveNetwork(), networkView.getSelectedNodes());
     }
 
     public void paste() {
         addEdit("Paste node");
-        if (nodeClipboard == null) return;
+        if (nodeClipboard == null) {
+            return;
+        }
         List<Node> newNodes = controller.pasteNodes(activeNetworkPath, nodeClipboard.network, nodeClipboard.nodes);
-
         networkView.updateAll();
         setActiveNode(newNodes.get(0));
         networkView.select(newNodes);
@@ -1582,17 +1578,15 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         String renderedChild = getActiveNetwork().getRenderedChildName();
         Node subnet = controller.groupIntoNetwork(activeNetworkPath, networkView.getSelectedNodes());
         controller.setNodePosition(Node.path(activeNetworkPath, subnet.getName()), pt);
-        if (renderedChild.equals(subnet.getRenderedChildName()))
+        if (renderedChild.equals(subnet.getRenderedChildName())) {
             controller.setRenderedChild(activeNetworkPath, subnet.getName());
-
+        }
         String name = JOptionPane.showInputDialog(this, "Network name:", subnet.getName());
         if (!name.equals(subnet.getName())) {
             controller.renameNode(activeNetworkPath, subnet.getName(), name);
             subnet = getActiveNetwork().getChild(name);
         }
-
         stopEdits();
-
         setActiveNode(subnet);
         networkView.updateAll();
         networkView.select(subnet);
@@ -1652,8 +1646,9 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
         PointerInfo a = MouseInfo.getPointerInfo();
         Point point = new Point(a.getLocation());
         for (Zoom zoomListener : zoomListeners) {
-            if (zoomListener.containsPoint(point))
+            if (zoomListener.containsPoint(point)) {
                 zoomListener.zoom(scaleDelta);
+            }
         }
     }
 
@@ -1666,9 +1661,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     //// Window events ////
-
     public void windowOpened(WindowEvent e) {
-        //viewEditorSplit.setDividerLocation(0.5);
         parameterNetworkSplit.setDividerLocation(0.5);
         topSplit.setDividerLocation(0.5);
     }
@@ -1694,6 +1687,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     private class ZoomInHandler implements ActionListener {
+
         @Override
         public void actionPerformed(ActionEvent actionEvent) {
             zoomView(1.05);
@@ -1701,6 +1695,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     private class ZoomOutHandler implements ActionListener {
+
         @Override
         public void actionPerformed(ActionEvent actionEvent) {
             zoomView(0.95);
@@ -1708,6 +1703,7 @@ public class NodeBoxDocument extends JFrame implements WindowListener, HandleDel
     }
 
     private class FramesWriter extends StringWriter {
+
         private final ProgressDialog dialog;
 
         public FramesWriter(ProgressDialog d) {
